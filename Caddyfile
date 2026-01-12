@@ -1,0 +1,16 @@
+:80 {
+  # normalize /api/v1 -> /api/v1/
+  redir /api/v1 /api/v1/ 308
+
+  # proxy ONLY the API path, and strip the prefix before it hits FastAPI
+  handle_path /api/v1/* {
+    reverse_proxy mapcase-api:8000
+  }
+
+  # Website
+  root * /srv/mapcase/site
+  file_server
+
+  # everything else (root, random paths) gets a 404 for now
+  # respond 404
+}

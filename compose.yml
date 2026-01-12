@@ -1,0 +1,79 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: mapcase-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${MAPCASE_DB_NAME}
+      POSTGRES_USER: ${MAPCASE_DB_USER}
+      POSTGRES_PASSWORD: ${MAPCASE_DB_PASSWORD}
+      TZ: America/New_York
+    # Don't expose 5432 publicly unless you absolutely need it.
+    # If you want local-only access on the VM for debugging, bind to 127.0.0.1:
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - mapcase_pgdata:/var/lib/postgresql/data
+      - ./db-init:/docker-entrypoint-initdb.d:ro
+    # A few conservative settings that behave fine on spinning disks:
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=50"
+      - "-c"
+      - "shared_buffers=2GB"
+      - "-c"
+      - "effective_cache_size=8GB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "maintenance_work_mem=256MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "max_wal_size=2GB"
+      - "-c"
+      - "min_wal_size=512MB"
+      - "-c"
+      - "wal_compression=on"
+      - "-c"
+      - "log_timezone=America/New_York"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  mapcase-api:
+    build: ./api
+    container_name: mapcase-api
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    container_name: mapcase-proxy
+    depends_on:
+      - mapcase-api
+    ports:
+      - "192.168.200.50:80:80"
+      # For later when certificates are set up
+      # - "192.168.200.50:443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./site:/srv/mapcase/site:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  mapcase_pgdata:
+  caddy_data:
+  caddy_config:
