@@ -152,6 +152,25 @@ class NwsWeatherService:
             res = await self.nws.fetch_json(url, if_none_match=if_none_match, if_modified_since=if_modified_since)
             expires_at = compute_expires_at(res.headers, self.forecast_default_ttl_s)
 
+            # Handle 304 properly: keep cached JSON but refresh expiry/validators
+            if res.status_code == 304 and cached and cached.get("data_json"):
+                debug.append(f"{ftype}: NWS 304 Not Modified -> extending cache until {expires_at.isoformat()}")
+                await upsert_forecast_cache(
+                    self.engine,
+                    gridpoint_id=int(gridpoint["id"]),
+                    forecast_type=ftype,
+                    url=url,
+                    data_json=cached["data_json"],
+                    status_code=304,
+                    error=None,
+                    etag=res.etag or cached.get("etag"),
+                    last_modified=res.last_modified or cached.get("last_modified"),
+                    expires_at=expires_at,
+                )
+                out["data"][ftype] = cached["data_json"]
+                continue
+
+            # Any non-200 or missing JSON -> stale-if-error
             if res.status_code != 200 or not res.json_data:
                 debug.append(f"{ftype}: NWS failed ({res.status_code})")
                 if res.error:
@@ -159,30 +178,12 @@ class NwsWeatherService:
                 if res.body_preview:
                     debug.append(f"{ftype}: body preview: {res.body_preview}")
 
-                # STALE-IF-ERROR: if we have cached data (even expired), return it
                 if cached and cached.get("data_json"):
                     debug.append(f"{ftype}: returning STALE cached data due to upstream failure")
                     out["data"][ftype] = cached["data_json"]
                     continue
 
                 out["data"][ftype] = {"error": "fetch failed", "status": res.status_code}
-                continue
-
-            if res.status_code != 200 or not res.json_data:
-                debug.append(f"{ftype}: NWS failed ({res.status_code})")
-                await upsert_forecast_cache(
-                    self.engine,
-                    gridpoint_id=int(gridpoint["id"]),
-                    forecast_type=ftype,
-                    url=url,
-                    data_json=cached["data_json"] if cached and cached.get("data_json") else {"error": "fetch failed"},
-                    status_code=res.status_code,
-                    error=f"NWS fetch failed ({res.status_code})",
-                    etag=res.etag,
-                    last_modified=res.last_modified,
-                    expires_at=expires_at,
-                )
-                out["data"][ftype] = cached["data_json"] if cached else {"error": "fetch failed"}
                 continue
 
             debug.append(f"{ftype}: NWS OK -> cached until {expires_at.isoformat()}")
