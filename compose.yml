@@ -13,7 +13,7 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
-      - mapcase_pgdata:/var/lib/postgresql/data
+      - mapcase_pgdata:/var/lib/postgresql
       - ./db-init:/docker-entrypoint-initdb.d:ro
     # A few conservative settings that behave fine on spinning disks:
     command:
@@ -39,11 +39,11 @@ services:
       - "-c"
       - "log_timezone=America/New_York"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U $$POSTGRES_USER -d postgres"]
       interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 30s
+      retries: 12
+      start_period: 60s
 
   mapcase-api:
     build: ./api
