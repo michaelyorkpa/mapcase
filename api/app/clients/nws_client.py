@@ -23,71 +23,54 @@ class NwsFetchResult:
     error: Optional[str] = None
     body_preview: Optional[str] = None
 
+
 class NwsClient:
     def __init__(self, timeout_seconds: float = 15.0):
         self._timeout = timeout_seconds
 
-import httpx
+    async def fetch_json(
+        self,
+        url: str,
+        *,
+        if_none_match: Optional[str] = None,
+        if_modified_since: Optional[str] = None,
+    ) -> NwsFetchResult:
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": DEFAULT_ACCEPT,
+        }
+        if if_none_match:
+            headers["If-None-Match"] = if_none_match
+        if if_modified_since:
+            headers["If-Modified-Since"] = if_modified_since
 
-async def fetch_json(
-    self,
-    url: str,
-    *,
-    if_none_match: Optional[str] = None,
-    if_modified_since: Optional[str] = None,
-) -> NwsFetchResult:
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Accept": DEFAULT_ACCEPT,
-    }
-    if if_none_match:
-        headers["If-None-Match"] = if_none_match
-    if if_modified_since:
-        headers["If-Modified-Since"] = if_modified_since
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=True) as client:
+                resp = await client.get(url, headers=headers)
+        except Exception as e:
+            return NwsFetchResult(
+                url=url,
+                status_code=0,
+                json_data=None,
+                headers={},
+                etag=None,
+                last_modified=None,
+                error=f"request error: {type(e).__name__}: {e}",
+            )
 
-    try:
-        async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=True) as client:
-            resp = await client.get(url, headers=headers)
-    except Exception as e:
-        return NwsFetchResult(
-            url=url,
-            status_code=0,
-            json_data=None,
-            headers={},
-            etag=None,
-            last_modified=None,
-            error=f"request error: {type(e).__name__}: {e}",
-        )
+        # 304 has no body by design
+        if resp.status_code == 304:
+            return NwsFetchResult(
+                url=str(resp.url),
+                status_code=304,
+                json_data=None,
+                headers=resp.headers,
+                etag=get_etag(resp.headers),
+                last_modified=get_last_modified(resp.headers),
+            )
 
-    # 304 has no body by design
-    if resp.status_code == 304:
-        return NwsFetchResult(
-            url=str(resp.url),
-            status_code=304,
-            json_data=None,
-            headers=resp.headers,
-            etag=get_etag(resp.headers),
-            last_modified=get_last_modified(resp.headers),
-        )
-
-    # Empty body happens sometimes on upstream errors
-    content = resp.content or b""
-    if len(content) == 0:
-        return NwsFetchResult(
-            url=str(resp.url),
-            status_code=resp.status_code,
-            json_data=None,
-            headers=resp.headers,
-            etag=get_etag(resp.headers),
-            last_modified=get_last_modified(resp.headers),
-            error="empty response body",
-        )
-
-    # Try JSON parse, but never throw
-    try:
-        data = resp.json()
-        if not isinstance(data, dict):
-            # NWS should be object-like; if not, still return it under json_data=None
+        content = resp.content or b""
+        if len(content) == 0:
             return NwsFetchResult(
                 url=str(resp.url),
                 status_code=resp.status_code,
@@ -95,26 +78,42 @@ async def fetch_json(
                 headers=resp.headers,
                 etag=get_etag(resp.headers),
                 last_modified=get_last_modified(resp.headers),
-                error=f"unexpected JSON type: {type(data).__name__}",
+                error="empty response body",
+            )
+
+        try:
+            data = resp.json()
+            if not isinstance(data, dict):
+                return NwsFetchResult(
+                    url=str(resp.url),
+                    status_code=resp.status_code,
+                    json_data=None,
+                    headers=resp.headers,
+                    etag=get_etag(resp.headers),
+                    last_modified=get_last_modified(resp.headers),
+                    error=f"unexpected JSON type: {type(data).__name__}",
+                    body_preview=resp.text[:300],
+                )
+        except Exception as e:
+            return NwsFetchResult(
+                url=str(resp.url),
+                status_code=resp.status_code,
+                json_data=None,
+                headers=resp.headers,
+                etag=get_etag(resp.headers),
+                last_modified=get_last_modified(resp.headers),
+                error=f"json parse error: {type(e).__name__}: {e}",
                 body_preview=resp.text[:300],
             )
-    except Exception as e:
+
         return NwsFetchResult(
             url=str(resp.url),
             status_code=resp.status_code,
-            json_data=None,
+            json_data=data,
             headers=resp.headers,
             etag=get_etag(resp.headers),
             last_modified=get_last_modified(resp.headers),
-            error=f"json parse error: {type(e).__name__}: {e}",
-            body_preview=resp.text[:300],
         )
 
-    return NwsFetchResult(
-        url=str(resp.url),
-        status_code=resp.status_code,
-        json_data=data,
-        headers=resp.headers,
-        etag=get_etag(resp.headers),
-        last_modified=get_last_modified(resp.headers),
-    )
+    async def points(self, lat: float, lon: float, **kwargs) -> NwsFetchResult:
+        return await self.fetch_json(f"https://api.weather.gov/points/{lat},{lon}", **kwargs)
