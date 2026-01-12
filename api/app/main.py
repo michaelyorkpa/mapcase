@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from app.routers import health
+from app.routers import weather
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
