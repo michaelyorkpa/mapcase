@@ -18,4 +18,4 @@ def validate_lat_lon(lat: float, lon: float) -> None:
 
 def assert_in_pa_bounds(lat: float, lon: float) -> None:
     if not (PA_MIN_LAT <= lat <= PA_MAX_LAT and PA_MIN_LON <= lon <= PA_MAX_LON):
-        raise ValueError("lat/lon is outside PA bounds (MVP restriction)")
+        raise ValueError("lat/lon is outside current bounds of Mapcase PA data")

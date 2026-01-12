@@ -4,11 +4,11 @@ import json
 from datetime import datetime
 from typing import Any, Optional
 
-from sqlalchemy import text
+from sqlalchemy import text, bindparam
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.http_cache import utcnow
-
 
 async def get_nearest_cached_gridpoint(
     engine: AsyncEngine,
@@ -67,32 +67,35 @@ async def upsert_gridpoint_from_points(
     if not (grid_id and grid_x is not None and grid_y is not None):
         raise ValueError("NWS /points response missing gridId/gridX/gridY")
 
-    sql = text(
-        """
-        INSERT INTO nws_gridpoints (
-          grid_id, grid_x, grid_y,
-          forecast_url, forecast_hourly_url, forecast_griddata_url, observation_stations_url,
-          time_zone, radar_station,
-          raw_json, updated_at
+    sql = (
+        text(
+            """
+            INSERT INTO nws_gridpoints (
+            grid_id, grid_x, grid_y,
+            forecast_url, forecast_hourly_url, forecast_griddata_url, observation_stations_url,
+            time_zone, radar_station,
+            raw_json, updated_at
+            )
+            VALUES (
+            :grid_id, :grid_x, :grid_y,
+            :forecast_url, :forecast_hourly_url, :forecast_griddata_url, :observation_stations_url,
+            :time_zone, :radar_station,
+            :raw_json, now()
+            )
+            ON CONFLICT (grid_id, grid_x, grid_y)
+            DO UPDATE SET
+            forecast_url = EXCLUDED.forecast_url,
+            forecast_hourly_url = EXCLUDED.forecast_hourly_url,
+            forecast_griddata_url = EXCLUDED.forecast_griddata_url,
+            observation_stations_url = EXCLUDED.observation_stations_url,
+            time_zone = EXCLUDED.time_zone,
+            radar_station = EXCLUDED.radar_station,
+            raw_json = EXCLUDED.raw_json,
+            updated_at = now()
+            RETURNING id;
+            """
         )
-        VALUES (
-          :grid_id, :grid_x, :grid_y,
-          :forecast_url, :forecast_hourly_url, :forecast_griddata_url, :observation_stations_url,
-          :time_zone, :radar_station,
-          :raw_json::jsonb, now()
-        )
-        ON CONFLICT (grid_id, grid_x, grid_y)
-        DO UPDATE SET
-          forecast_url = EXCLUDED.forecast_url,
-          forecast_hourly_url = EXCLUDED.forecast_hourly_url,
-          forecast_griddata_url = EXCLUDED.forecast_griddata_url,
-          observation_stations_url = EXCLUDED.observation_stations_url,
-          time_zone = EXCLUDED.time_zone,
-          radar_station = EXCLUDED.radar_station,
-          raw_json = EXCLUDED.raw_json,
-          updated_at = now()
-        RETURNING id;
-        """
+        .bindparams(bindparam("raw_json", type_=JSONB))
     )
 
     payload = {
@@ -105,7 +108,7 @@ async def upsert_gridpoint_from_points(
         "observation_stations_url": props.get("observationStations"),
         "time_zone": props.get("timeZone"),
         "radar_station": props.get("radarStation"),
-        "raw_json": json.dumps(points_json),
+        "raw_json": points_json,   # <-- dict, not json.dumps(...)
     }
 
     async with engine.begin() as conn:
@@ -136,7 +139,7 @@ async def insert_point_cache(
           ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
           :gridpoint_id,
           :distance_m,
-          :raw_json::jsonb,
+          :raw_json,
           :etag,
           :last_modified,
           now(),
@@ -202,7 +205,7 @@ async def upsert_forecast_cache(
         )
         VALUES (
           :gridpoint_id, :forecast_type, :url,
-          :data_json::jsonb, :status_code, :error,
+          :data_json, :status_code, :error,
           :etag, :last_modified,
           now(), :expires_at,
           now()
@@ -282,7 +285,7 @@ async def upsert_stations_for_gridpoint(
             station_sql = text(
                 f"""
                 INSERT INTO nws_stations (station_identifier, name, station_geog, raw_json, updated_at)
-                VALUES (:station_identifier, :name, {station_geog_expr}, :raw_json::jsonb, now())
+                VALUES (:station_identifier, :name, {station_geog_expr}, :raw_json, now())
                 ON CONFLICT (station_identifier)
                 DO UPDATE SET
                   name = EXCLUDED.name,
