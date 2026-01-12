@@ -8,8 +8,10 @@
   }
 
   # Website
-  root * /srv/mapcase/site
-  file_server
+  handle {
+    root * /srv/mapcase/site
+    file_server
+  }
 
   # everything else (root, random paths) gets a 404 for now
   # respond 404
