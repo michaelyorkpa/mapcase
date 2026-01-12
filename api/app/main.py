@@ -17,6 +17,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 engine = create_async_engine(DATABASE_URL, pool_pre_ping=True) if DATABASE_URL else None
 
 app.include_router(health.router)
+app.include_router(weather.router)
 
 @app.get("/db-check")
 async def db_check():
